@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jev-mine-sweeping"
+description = "Play Minesweeper with TypeSafe Jev (System One): an HTML game whose auto play asks the model every move."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "sxinyuhoo" }]
+keywords = ["minesweeper", "typesafe", "jev", "system-one", "agent", "html"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Games/Entertainment :: Puzzle Games",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# 版本号的唯一来源是 src/jev_mine_sweeping/__init__.py 里的 __version__，
+# 避免两处各写一份然后悄悄不一致（`jev-ms --version` 读的就是它）。
+dynamic = ["version"]
+
+dependencies = [
+    "PyYAML>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+sdk = ["typesafe-sdk>=0.1"]
+dev = ["pytest>=7.4", "ruff>=0.6"]
+
+[project.scripts]
+jev-ms = "jev_mine_sweeping.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "jev_mine_sweeping.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="doc.title">Jev 扫雷 · 自动操作</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="conn-dot"></span>
+    <h1 data-i18n="app.title">Jev 扫雷</h1>
+    <span class="badge" id="backend-badge" data-i18n="badge.connecting">连接中…</span>
+    <span class="badge" id="mode-badge">—</span>
+    <button class="chip lang" id="lang">EN</button>
+  </div>
+
+  <div class="group" id="difficulty-group">
+    <span class="label" data-i18n="label.difficulty">难度</span>
+    <button class="chip" data-difficulty="beginner"><span data-i18n="diff.easy">简单</span> <em>9×9 · 10</em></button>
+    <button class="chip" data-difficulty="hard"><span data-i18n="diff.hard">困难</span> <em>16×16 · 40</em></button>
+    <button class="chip is-active" data-difficulty="expert"><span data-i18n="diff.expert">专家</span> <em>16×30 · 99</em></button>
+  </div>
+
+  <div class="group">
+    <button id="autopilot" class="primary" data-i18n="btn.start">▶ 开始自动操作</button>
+    <button id="step" data-i18n="btn.step">单步决策</button>
+    <button id="reset" data-i18n="btn.reset">重新开局</button>
+  </div>
+
+  <div class="group">
+    <span class="label" data-i18n="label.speed">速度</span>
+    <select id="speed">
+      <option value="0" data-i18n="speed.0">最快（不等）</option>
+      <option value="300" selected data-i18n="speed.300">0.3 秒/步</option>
+      <option value="1000" data-i18n="speed.1000">1 秒/步</option>
+      <option value="3000" data-i18n="speed.3000">3 秒/步</option>
+    </select>
+    <label class="toggle"><input type="checkbox" id="show-prob" checked> <span data-i18n="toggle.prob">显示 p(雷)</span></label>
+    <label class="toggle"><input type="checkbox" id="show-code"> <span data-i18n="toggle.code">叠加代码估计</span></label>
+    <label class="toggle"><input type="checkbox" id="restart-loss" checked> <span data-i18n="toggle.restartLoss">踩雷后自动重开</span></label>
+    <label class="toggle"><input type="checkbox" id="restart-win"> <span data-i18n="toggle.restartWin">通关后也重开</span></label>
+  </div>
+</header>
+
+<main>
+  <section class="board-pane">
+    <div class="board-wrap">
+      <div id="board" class="board"></div>
+    </div>
+    <div class="board-foot">
+      <div class="stat status"><span data-i18n="foot.status">状态</span><strong id="game-status" class="idle" data-i18n="status.idle">未开始</strong></div>
+      <div class="stat"><span data-i18n="foot.revealed">已翻开</span><strong id="revealed">0</strong></div>
+      <div class="stat"><span data-i18n="foot.flags">插旗</span><strong id="flags">0</strong></div>
+      <div class="stat"><span data-i18n="foot.minesLeft">剩余雷</span><strong id="mines-left">99</strong></div>
+      <div class="stat"><span data-i18n="foot.moves">步数</span><strong id="moves">0</strong></div>
+      <div class="stat"><span data-i18n="foot.elapsed">用时</span><strong id="elapsed">0.0s</strong></div>
+      <div class="stat"><span data-i18n="foot.session">本会话</span><strong id="session">0 局</strong></div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="card">
+      <div class="card-head">
+        <h2 data-i18n="panel.decision">当前决策</h2>
+        <span class="source" id="source-badge">—</span>
+      </div>
+      <div class="decision-main">
+        <div class="decision-action" id="decision-action" data-i18n="decision.waiting">等待开始</div>
+        <div class="decision-note" id="decision-note" data-i18n="decision.hint">点「开始自动操作」，每一步都会请求一次 Jev。</div>
+      </div>
+      <div class="meters">
+        <div class="meter"><span data-i18n="meter.confidence">置信度</span><div class="bar"><i id="bar-confidence"></i></div><b id="val-confidence">—</b></div>
+        <div class="meter"><span data-i18n="meter.risk">所选格 p(雷)</span><div class="bar risk"><i id="bar-risk"></i></div><b id="val-risk">—</b></div>
+        <div class="meter"><span data-i18n="meter.danger">局面危险度</span><div class="bar danger"><i id="bar-danger"></i></div><b id="val-danger">—</b></div>
+      </div>
+      <div class="meta" id="decision-meta"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 data-i18n="panel.options">Jev 的选项与概率</h2><span class="hint" id="options-hint">—</span></div>
+      <div class="options" id="options"><p class="empty" data-i18n="options.empty">还没有决策。</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 data-i18n="panel.facts">代码侧事实</h2><span class="hint" data-i18n="facts.hint">约束规则证明的结论，作为已知条件交给 Jev</span></div>
+      <div class="solver-view" id="solver-view"><p class="empty">—</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 data-i18n="panel.stats">会话统计</h2></div>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2 data-i18n="panel.log">决策日志</h2><button class="mini" id="clear-log" data-i18n="log.clear">清空</button></div>
+      <ol class="log" id="log"></ol>
+    </div>
+  </aside>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

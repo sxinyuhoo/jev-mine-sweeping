@@ -1,0 +1,87 @@
+# jev-mine-sweeping 配置模板
+# 复制为 config/config.yaml 后填写自己的 key（config.yaml 已被 .gitignore 忽略）。
+# 命令行参数（--backend / --difficulty / --decision-mode / --guarded 等）会覆盖这里的值。
+
+jev:
+  # TypeSafe（Jev / System One）API key。
+  # 也可用环境变量 TYPESAFE_API_KEY，环境变量优先级更高。
+  # 申请地址：https://console.typesafe.ai/settings/keys
+  api_key: ""
+
+  # 模型别名，官方默认 jev-latest
+  model: jev-latest
+
+  # System One 端点（一般不用改）
+  endpoint: "https://api.typesafe.ai/v1/systemone"
+
+  # 调用后端：
+  #   http  —— 直接 POST（默认，依赖最少，日志最透明）
+  #   sdk   —— 官方 typesafe-sdk（pydantic 类型化，需要 pip install "typesafe-sdk"）
+  #   mock  —— 离线启发式替身，不联网、不花钱，仅用于跑通链路和自测
+  backend: "http"
+
+  timeout: 60          # 单次请求超时（秒）
+  max_retries: 3       # 网络/5xx/429 重试次数
+  retry_backoff: 1.5   # 重试退避底数
+
+  # 单次请求内最多问多少个 is_mine 的 Noul 问题。原子模式只问「本次可选」的那批格子，
+  # 所以这个上限通常用不满；一个请求内并行求解，加问题几乎不涨延迟。
+  max_noul_questions: 40
+  # Choice 选项上限（官方硬上限 255）。每格 2 个选项（开/插旗），
+  # 原子模式的短名单见 agent.focus_cells，这里是安全网。
+  max_choice_options: 60
+  # 是否顺带问一个 danger 的 Score（只用于日志/看板，不参与决策）
+  ask_danger_score: true
+
+game:
+  # 服务端默认棋盘（页面里的难度按钮、命令行 --difficulty 都会覆盖它）：
+  #   简单 / beginner  = 9 行 x 9 列, 10 雷   —— 一局约 20 步 / 20 万 token，先用这个试
+  #   困难 / hard      = 16 行 x 16 列, 40 雷  —— 一局约 80~100 步 / 80 万 token
+  #   专家 / expert    = 16 行 x 30 列, 99 雷  —— 一局约 200~400 步 / 200~400 万 token
+  rows: 16
+  cols: 16
+  mines: 40
+
+agent:
+  # 决策模式：
+  #   atomic —— 默认。代码把「事实」（约束规则的证明结论、每格代码风险）写进 state，
+  #             只对一小撮真正可能落子的格子提问，然后由 Jev 自己给出的每格 p(雷)
+  #             排序落子。适合「让模型做它擅长的事」：判断，而不是在 480 个选项里做分类。
+  #   choice —— 老做法：一个大 Choice 覆盖所有候选格，Jev 选什么就走什么（可加交叉校验）。
+  #             留作对照：同一盘面两种模式可以直接比。
+  decision_mode: "atomic"
+
+  # off       —— 每一步都由 Jev 决定（默认：这个项目就是用来测模型能力的）
+  # prefilter —— 先用约束规则把「必然安全/必然是雷」的格子走掉，剩下真正不确定的交给 Jev
+  solver_mode: "off"
+
+  # 扫雷计数器的全局推理：full 双向 / safe_only 只用「雷都标完了→其余都安全」/ off 不用
+  # 只在 solver_mode=prefilter 时有意义
+  solver_global_rule: "full"
+
+  # 可选动作集合：frontier（只给贴着数字的未知格，默认）| all_hidden（所有未知格）
+  action_space: "frontier"
+
+  # ---- 原子模式里代码唯一加在 Jev 答案之上的四个数 ----
+  safe_threshold: 0.10     # Jev 给的 p(雷) ≤ 它 → 直接开（模型自己说安全）
+  mine_threshold: 0.50     # Jev 给的 p(雷) ≥ 它 → 视为雷（插旗）
+  flag_preference: 0.30    # 最好的可开格子风险都高于它、又有格子被判为雷时，插旗而不是赌
+  choice_tolerance: 0.05   # Jev 的 Choice 比「最安全格」差多少之内仍然采纳（盲盘时靠它保留模型的选择）
+
+  # 短名单长度：一次提问最多让 Jev 看到多少格（含必然安全的格子）。
+  # 16x30 有 480 格，短名单比「240 个几乎一样的选项」更能让模型把注意力放在该放的地方。
+  focus_cells: 24
+
+  # ---- choice 模式的交叉校验（原子模式下不使用）----
+  # 用 Noul 交叉校验 Choice（拒绝开自己都认为是雷的格子 / 拒绝给安全格插旗）
+  safety_override: false
+  override_threshold: 0.3  # 选中格子的 p_mine 超过它时改判
+  confidence_floor: 0.0    # Choice 置信度低于它时退回代码风险估计；0 = 不降级
+
+  max_steps: 800           # 单局步数上限（16x30 一局可能几百步）
+  max_frontier_entries: 40 # 发给 Jev 的候选格明细上限
+
+run:
+  episodes: 1
+  log_dir: log/runs
+  pause_between_episodes: 1.5

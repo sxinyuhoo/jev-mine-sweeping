@@ -1,0 +1,234 @@
+diff --git a/core/reinforcement_learning_train_9x9.py b/core/reinforcement_learning_train_9x9.py
+index 26b5c38..f64df98 100644
+--- a/core/reinforcement_learning_train_9x9.py
++++ b/core/reinforcement_learning_train_9x9.py
+@@ -4,6 +4,7 @@ import torch.nn as nn
+ import torch.optim as optim
+ import gymnasium as gym
+ import numpy as np
++from torchinfo import summary
+ from gymnasium import spaces
+ from tianshou.data import Collector, VectorReplayBuffer, ReplayBuffer, Batch
+ from tianshou.env import DummyVectorEnv
+@@ -13,77 +14,97 @@ from torch.utils.tensorboard import SummaryWriter
+ from tianshou.utils import TensorboardLogger
+ from mine_sweeper_game import MineSweeper
+ 
+-# 在文件开头添加设备检测
+-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
++# 修改设备检测逻辑
++if torch.backends.mps.is_available():
++    device = torch.device("mps")
++elif torch.cuda.is_available():
++    device = torch.device("cuda")
++else:
++    device = torch.device("cpu")
++
+ print(f"Using device: {device}")
+ 
++# 设置默认数据类型
++torch.set_default_device(device)
++torch.set_default_dtype(torch.float32)
++np.set_printoptions(precision=6, suppress=True)
++
+ class Net(nn.Module):
+     def __init__(self, state_size, action_size, hidden_size=256):
+         super().__init__()
+         
+         # 特征提取器
+         self.feature_extractor = nn.Sequential(
+-            nn.Linear(state_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size),
++            nn.Linear(state_size, hidden_size), # 81 -> 256
++            nn.LayerNorm(hidden_size),
+             nn.ReLU(),
+             nn.Dropout(0.2),
+             
+-            nn.Linear(hidden_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size),
++            nn.Linear(hidden_size, hidden_size), # 256 -> 256
++            nn.LayerNorm(hidden_size),
+             nn.ReLU(),
+             nn.Dropout(0.2)
+         )
+         
+         # 残差块1
+         self.res_block1 = nn.Sequential(
+-            nn.Linear(hidden_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size),
++            nn.Linear(hidden_size, hidden_size), # 256 -> 256
++            nn.LayerNorm(hidden_size),
+             nn.ReLU(),
+-            nn.Linear(hidden_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size)
++            nn.Linear(hidden_size, hidden_size), # 256 -> 256
++            nn.LayerNorm(hidden_size)
+         )
+         
+         # 残差块2 
+         self.res_block2 = nn.Sequential(
+-            nn.Linear(hidden_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size),
++            nn.Linear(hidden_size, hidden_size), # 256 -> 256
++            nn.LayerNorm(hidden_size),
+             nn.ReLU(),
+-            nn.Linear(hidden_size, hidden_size),
+-            nn.BatchNorm1d(hidden_size)
++            nn.Linear(hidden_size, hidden_size), # 256 -> 256
++            nn.LayerNorm(hidden_size)
+         )
+         
+         # 价值头
+         self.value_head = nn.Sequential(
+-            nn.Linear(hidden_size, hidden_size // 2),
++            nn.Linear(hidden_size, hidden_size // 2), # 256 -> 128
+             nn.ReLU(),
+-            nn.Linear(hidden_size // 2, action_size)
++            nn.Linear(hidden_size // 2, action_size) # 128 -> 81
+         )
+         
+         self.relu = nn.ReLU()
+ 
+     def forward(self, obs, state=None, info=None):
+-        if not isinstance(obs, torch.Tensor):
+-            obs = torch.tensor(obs, dtype=torch.float).to(device)
+-        batch = obs.shape[0] if len(obs.shape) > 1 else 1
+-        x = obs.view(batch, -1)
+-        
+-        # 特征提取
+-        x = self.feature_extractor(x)
+         
+-        # 残差连接1
+-        identity = x
+-        x = self.res_block1(x)
+-        x = self.relu(x + identity)
+-        
+-        # 残差连接2
+-        identity = x  
+-        x = self.res_block2(x)
+-        x = self.relu(x + identity)
++        # 1. 转换为tensor
++        if not isinstance(obs, torch.Tensor):
++            obs = torch.tensor(obs, dtype=torch.float32).to(device)
++        elif obs.dtype != torch.float32:
++            obs = obs.float()
++
++        # 2. 处理batch维度 
++        # DQN会自动处理batch_size，我们只需确保维度正确
++        if len(obs.shape) == 1:  # 单个样本 [81]
++            obs = obs.unsqueeze(0)  # 变为 [1, 81]
++        elif len(obs.shape) == 2:  # 批量样本 [batch_size, 81]
++            assert obs.shape[1] == 81, f"输入维度错误: 期望81, 得到{obs.shape[1]}"
++        else:  # 处理其他情况
++            obs = obs.view(-1, 81)  # 自动计算batch_size
+         
+-        # 价值预测
+-        logits = self.value_head(x)
++        # 3. 特征提取
++        x = self.feature_extractor(obs)
++
++        # 4. 残差块1
++        x1 = self.res_block1(x)
++        x = self.relu(x + x1)
++
++        # 5. 残差块2
++        x2 = self.res_block2(x)
++        x = self.relu(x + x2)
++
++        # 6. 价值头
++        x = self.value_head(x)
+         
+-        return logits, state
++        return x, state
+ 
+ class MinesweeperPolicy(DQNPolicy):
+     def __init__(self, model, optim, discount_factor, estimation_step, target_update_freq, action_space):
+@@ -109,7 +130,7 @@ class MinesweeperPolicy(DQNPolicy):
+         q_values, hidden = self.model(obs, state=state)
+         
+         if isinstance(obs, np.ndarray):
+-            obs = torch.from_numpy(obs).float().to(device)
++            obs = torch.from_numpy(obs).float().to(device, dtype=torch.float32) 
+             
+         # 获取有效动作
+         valid_actions = []
+@@ -143,12 +164,13 @@ class MinesweeperEnv(gym.Env):
+         # 创建扫雷游戏实例
+         self.game = MineSweeper(grid_size=grid_size, num_mines=num_mines)
+ 
+-        self.state = np.array(self.game.cur_grid).flatten()
++        self.state = torch.tensor(np.array(self.game.cur_grid).flatten(), device=device, dtype=torch.float32)
+ 
+     def reset(self, seed=None):
+         # 重置游戏状态
+         self.game = MineSweeper(grid_size=self.grid_size, num_mines=self.game.num_mines)
+-        self.state = np.array(self.game.cur_grid).flatten()
++        # 确保返回float32类型的numpy数组
++        self.state = np.array(self.game.cur_grid, dtype=np.float32).flatten()
+         return self.state, {}
+ 
+     def step(self, action):
+@@ -157,13 +179,14 @@ class MinesweeperEnv(gym.Env):
+         col = action % self.grid_size
+         
+         # 记录之前的状态用于计算奖励
+-        prev_state = np.array(self.game.cur_grid).flatten()
++        prev_state = torch.tensor(np.array(self.game.cur_grid).flatten(), device=device, dtype=torch.float32)
+         
+         # 执行动作
+         result = self.game.play_game((row, col))
+         
+         # 获取新状态
+-        new_state = np.array(self.game.cur_grid).flatten()
++        # 确保返回float32类型的numpy数组
++        new_state = np.array(self.game.cur_grid, dtype=np.float32).flatten()
+         self.state = new_state
+         
+         # 根据游戏返回值判断游戏状态和奖励
+@@ -201,7 +224,7 @@ class MinesweeperEnv(gym.Env):
+         self.game.show_grid(self.game.cur_grid)
+ 
+ class MinesweeperAgent:
+-    def __init__(self, state_size, action_size, hidden_size=128, lr=1e-3, gamma=0.99, epsilon=0.1):
++    def __init__(self, state_size, action_size, hidden_size=256, lr=1e-3, gamma=0.99, epsilon=0.1):
+         self.state_size = state_size
+         self.action_size = action_size
+         self.hidden_size = hidden_size
+@@ -210,6 +233,12 @@ class MinesweeperAgent:
+         self.epsilon = epsilon
+ 
+         self.model = Net(state_size, action_size, hidden_size).to(device)
++
++        # torchinfo 
++        print("Model Summary:\n")
++        summary(self.model, input_size=(1, 81))
++        print("\n")
++
+         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+         
+         # 使用自定义的 MinesweeperPolicy
+@@ -222,14 +251,22 @@ class MinesweeperAgent:
+             action_space=spaces.Discrete(action_size)
+         )
+ 
+-def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=128, epoch=100, step_per_epoch=2000, step_per_collect=20, update_per_step=0.2):
++def train_agent(agent, env, num_envs=5, buffer_size=50000, batch_size=256, epoch=100, step_per_epoch=2000, step_per_collect=20, update_per_step=0.2):
++    
+     # 设置环境
+     # train_env = DummyVectorEnv([lambda: env for _ in range(num_envs)])
+     # test_env = DummyVectorEnv([lambda: env for _ in range(num_envs)])
+     # buffer = VectorReplayBuffer(buffer_size, buffer_num=num_envs)
+     train_env = DummyVectorEnv([lambda: env])
+     test_env = DummyVectorEnv([lambda: env])
+-    buffer = ReplayBuffer(buffer_size)
++    # 设置buffer时指定数据类型
++    buffer = ReplayBuffer(
++        buffer_size,
++        ignore_obs_next=True,  # 优化内存使用
++        save_only_last_obs=True,  # 优化内存使用
++        stack_num=1,
++        dtype=np.float32  # 明确指定数据类型
++    )
+ 
+     # 设置收集器
+     collector = Collector(
